@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teen Patti Royale</title>
+    <!-- PeerJS লাইব্রেরি (সার্ভার ছাড়া সরাসরি ২ ফোনে কানেক্ট করার জন্য) -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
+        body { background: #0c1b33; color: #fff; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 15px 10px; }
+
+        .header { color: #ffeb3b; font-size: 22px; font-weight: bold; text-align: center; margin-top: 5px; }
+
+        /* কানেকশন প্যানেল */
+        .room-box {
+            background: rgba(255, 255, 255, 0.1); border: 1px solid #ffeb3b;
+            padding: 10px; border-radius: 10px; text-align: center; width: 100%; max-width: 340px;
+        }
+        .room-box input { padding: 6px; border-radius: 5px; border: none; outline: none; width: 60%; text-align: center; }
+        .room-box button { padding: 6px 12px; border-radius: 5px; border: none; background: #ff9800; color: #fff; font-weight: bold; cursor: pointer; }
+
+        /* টেবিল ডিজাইন */
+        .table-area {
+            width: 310px; height: 360px; background: radial-gradient(circle, #1e5622 0%, #0b290e 100%);
+            border: 12px solid #5c3a21; border-radius: 150px; display: flex; flex-direction: column;
+            align-items: center; justify-content: space-between; padding: 20px 0; position: relative;
+            box-shadow: inset 0 0 20px #000; margin: 10px 0;
+        }
+
+        .pot-box {
+            border: 2px solid #ffeb3b; padding: 6px 20px; border-radius: 20px;
+            color: #ffeb3b; font-size: 16px; font-weight: bold; background: rgba(0,0,0,0.6); margin-top: 50px;
+        }
+
+        .cards-hand { display: flex; gap: 6px; }
+        .card {
+            width: 45px; height: 65px; background: #900C3F; border: 2px solid #fff; border-radius: 5px;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            font-size: 16px; font-weight: bold; color: #fff;
+        }
+        .card.open { background: #fff; color: #000; }
+        .card.open.red { color: #d32f2f; }
+
+        .player-tag {
+            background: #ff7043; color: #fff; padding: 4px 12px; border-radius: 50px;
+            font-size: 13px; font-weight: bold; border: 2px solid #fff; margin-top: 5px;
+        }
+
+        /* কন্ট্রোল বাটন */
+        .controls { display: flex; gap: 6px; width: 100%; max-width: 360px; justify-content: center; }
+        .btn {
+            flex: 1; padding: 12px 2px; border-radius: 25px; border: none; font-size: 13px;
+            font-weight: bold; color: #fff; cursor: pointer; text-align: center;
+        }
+        .btn-start { background: #2e7d32; }
+        .btn-see { background: #0288d1; }
+        .btn-chaal { background: #f57c00; }
+        .btn-pack { background: #d32f2f; }
+    </style>
+</head>
+<body>
+
+    <div class="header">♠ Teen Patti Multiplayer ♠</div>
+
+    <!-- বন্ধুদের কানেক্ট করার রুম সিস্টেম -->
+    <div class="room-box">
+        <div id="my-code-display">তোমার আইডি তৈরি হচ্ছে...</div>
+        <div style="margin-top: 6px;">
+            <input type="text" id="join-id-input" placeholder="বন্ধুর কোড বসাও">
+            <button onclick="connectToFriend()">যুক্ত হও</button>
+        </div>
+    </div>
+
+    <!-- গেম টেবিল -->
+    <div class="table-area">
+        <div class="pot-box">POT: ৳<span id="pot-amount">0</span></div>
+
+        <div style="display: flex; flex-direction: column; align-items: center;">
+            <div class="cards-hand" id="my-cards">
+                <div class="card"></div>
+                <div class="card"></div>
+                <div class="card"></div>
+            </div>
+            <div class="player-tag" id="player-name-tag">You</div>
+        </div>
+    </div>
+
+    <div style="font-size:13px; color:#ffcc00; text-align:center;" id="status-text">আইডি কপি করে বন্ধুকে দাও বা বন্ধুর কোড লিখে যুক্ত হও।</div>
+
+    <!-- বাটনসমূহ -->
+    <div class="controls">
+        <button class="btn btn-start" onclick="startGame()">Start Game</button>
+        <button class="btn btn-see" onclick="seeCards()">See Cards</button>
+        <button class="btn btn-chaal" onclick="chaal()">Chaal (৳20)</button>
+        <button class="btn btn-pack" onclick="pack()">Pack</button>
+    </div>
+
+    <script>
+        let peer = new Peer();
+        let conn = null;
+        let myCardsData = [];
+        let pot = 0;
+        let myBalance = 1000;
+
+
+        const suits = ['♠', '♥', '♦', '♣'];
+        const values = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+
+        function getRandomCard() {
+            let s = suits[Math.floor(Math.random() * suits.length)];
+            let v = values[Math.floor(Math.random() * values.length)];
+            return { suit: s, value: v, isRed: (s === '♥' || s === '♦') };
+        }
+
+        // নিজের কোড দেখানো
+        peer.on('open', (id) => {
+            document.getElementById('my-code-display').innerHTML = `তোমার কোড: <b style="color:#ffeb3b; font-size:16px;">${id}</b>`;
+        });
+
+        // বন্ধু কানেক্ট হলে (Host Side)
+        peer.on('connection', (connection) => {
+            conn = connection;
+            setupConnection();
+            document.getElementById('status-text').innerText = "বন্ধু যুক্ত হয়েছে! 'Start Game' চাপুন।";
+        });
+
+        // বন্ধুর সাথে কানেক্ট করা (Client Side)
+        function connectToFriend() {
+            let friendId = document.getElementById('join-id-input').value.trim();
+            if (!friendId) return alert("বন্ধুর কোড বসাও!");
+            conn = peer.connect(friendId);
+            setupConnection();
+            document.getElementById('status-text').innerText = "বন্ধুর সাথে যুক্ত হয়েছ! গেম শুরুর অপেক্ষা করো...";
+        }
+
+        function setupConnection() {
+            conn.on('data', (data) => {
+                if (data.type === 'START') {
+                    pot = data.pot;
+                    myCardsData = data.cards;
+                    document.getElementById('pot-amount').innerText = pot;
+                    renderHiddenCards();
+                    document.getElementById('status-text').innerText = "গেম চলছে...";
+                } else if (data.type === 'CHAAL') {
+                    pot = data.pot;
+                    document.getElementById('pot-amount').innerText = pot;
+                } else if (data.type === 'PACK') {
+                    alert("বন্ধু Pack করেছে! তুমি জিতে গেছ! 🏆");
+                    document.getElementById('status-text').innerText = "তুমি জিতেছ!";
+                }
+            });
+        }
+
+        // গেম স্টার্ট করা
+        function startGame() {
+            if (!conn) return alert("আগে বন্ধুর সাথে কানেক্ট হও!");
+            pot = 40;
+            document.getElementById('pot-amount').innerText = pot;
+            
+            let hostCards = [getRandomCard(), getRandomCard(), getRandomCard()];
+            let clientCards = [getRandomCard(), getRandomCard(), getRandomCard()];
+
+            myCardsData = hostCards;
+            renderHiddenCards();
+
+            conn.send({ type: 'START', pot: pot, cards: clientCards });
+            document.getElementById('status-text').innerText = "গেম শুরু হয়েছে!";
+        }
+
+        // চাল দেওয়া
+        function chaal() {
+            if (!conn) return;
+            pot += 20;
+            document.getElementById('pot-amount').innerText = pot;
+            conn.send({ type: 'CHAAL', pot: pot });
+        }
+
+        // প্যাক করা
+        function pack() {
+            if (!conn) return;
+            conn.send({ type: 'PACK' });
+            alert("তুমি Pack করেছ! বন্ধু জিতে গেছে।");
+            document.getElementById('status-text').innerText = "তুমি প্যাক করেছ।";
+        }
+
+        // কার্ড দেখা
+        function seeCards() {
+            if (!myCardsData.length) return;
+            const container = document.getElementById('my-cards');
+            container.innerHTML = '';
+            myCardsData.forEach(c => {
+                container.innerHTML += `
+                    <div class="card open ${c.isRed ? 'red' : ''}">
+                        <span>${c.value}</span>
+                        <span>${c.suit}</span>
+                    </div>`;
+            });
+        }
+
+        function renderHiddenCards() {
+            const container = document.getElementById('my-cards');
+            container.innerHTML = `<div class="card"></div><div class="card"></div><div class="card"></div>`;
+        }
+    </script>
+</body>
+</html>
